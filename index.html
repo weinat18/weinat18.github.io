@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>聊天</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        /* 此处可复用之前的 CSS 样式 */
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>DeepSeek 对话</h1>
+        <div class="switch">
+            <span>深度思考</span>
+            <input type="checkbox" id="reasoning-toggle" checked>
+        </div>
+    </div>
+    
+    <!-- API 密钥输入（可选） -->
+    <div style="padding: 10px; background: #f0f0f0;">
+        <input type="password" id="api-key" placeholder="输入你的 DeepSeek API 密钥" style="width: 100%; padding: 8px;">
+    </div>
+
+    <div id="chat-container"></div>
+
+    <div class="input-area">
+        <input type="text" id="user-input" placeholder="输入消息...">
+        <button id="send-btn">➤</button>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const reasoningToggle = document.getElementById('reasoning-toggle');
+        const apiKeyInput = document.getElementById('api-key');
+
+        let messages = [];
+        let isReceiving = false;
+
+        // 添加消息到界面（与之前相同）
+        function addMessage(role, content, reasoning = null) {
+            // ... 代码与之前相同
+        }
+
+        // 流式调用 DeepSeek API
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            const apiKey = apiKeyInput.value.trim();
+            
+            if (!text || isReceiving) return;
+            if (!apiKey) {
+                alert('请输入 API 密钥');
+                return;
+            }
+
+            // 添加用户消息
+            addMessage('user', text);
+            messages.push({ role: 'user', content: text });
+            userInput.value = '';
+            sendBtn.disabled = true;
+            isReceiving = true;
+
+            // 创建助手消息占位
+            const assistantDiv = document.createElement('div');
+            assistantDiv.classList.add('message', 'assistant');
+            chatContainer.appendChild(assistantDiv);
+
+            let currentReasoningDiv = null;
+            let currentContentDiv = null;
+            let currentContentText = '';
+
+            try {
+                const model = reasoningToggle.checked ? 'deepseek-reasoner' : 'deepseek-chat';
+                
+                const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: messages,
+                        temperature: 1.2,
+                        max_tokens: 8192,
+                        stream: true
+                    })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') continue;
+                            
+                            try {
+                                const parsed = JSON.parse(data);
+                                const delta = parsed.choices[0].delta;
+                                
+                                if (delta.content) {
+                                    if (!currentContentDiv) {
+                                        currentContentDiv = document.createElement('div');
+                                        currentContentDiv.classList.add('content');
+                                        assistantDiv.appendChild(currentContentDiv);
+                                    }
+                                    currentContentText += delta.content;
+                                    currentContentDiv.textContent = currentContentText;
+                                }
+                            } catch (e) {
+                                console.error('解析错误', e);
+                            }
+                        }
+                    }
+                    
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
+
+                // 流结束，添加助手消息到历史
+                if (currentContentText) {
+                    messages.push({ role: 'assistant', content: currentContentText });
+                    // 渲染 Markdown
+                    if (currentContentDiv) {
+                        currentContentDiv.innerHTML = marked.parse(currentContentText);
+                    }
+                }
+
+            } catch (error) {
+                console.error('请求失败', error);
+                assistantDiv.innerHTML = '<div style="color:red;">请求失败，请检查网络或 API 密钥</div>';
+            } finally {
+                isReceiving = false;
+                sendBtn.disabled = false;
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>
